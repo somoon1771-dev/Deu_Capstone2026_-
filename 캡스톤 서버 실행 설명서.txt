@@ -1,0 +1,342 @@
+캡스톤 서버 실행 설명서
+
+1. 프로젝트 설명
+이 프로젝트는 Spring Boot 기반의 그림자 기반 보행자 네비게이션 서버입니다.
+
+사용자가 출발지와 목적지 좌표를 보내면 서버는 OSM 도로망 데이터와 건물 그림자 데이터를 이용해 보행 경로를 탐색합니다. 현재는 단순히 후보 경로를 만든 뒤 나중에 그늘 점수를 비교하는 방식이 아니라, OSM 도로 segment마다 그림자 점수를 먼저 계산하고 그 점수를 경로 탐색 비용에 반영합니다.
+
+최종 응답은 기본적으로 SHORTEST / SHADE / BALANCED 경로를 반환하며, CCTV 접근성 점수를 기반으로 한 SAFE 경로도 함께 반환할 수 있습니다.
+
+CCTV는 그늘 점수(shadeScore)나 날씨 점수(weatherComfortScore)에 직접 합산되는 방식이 아니라, 별도의 안전 점수(safetyScore)와 CCTV 개수(cctvCount)로 계산됩니다. 프론트엔드에서는 CCTV 마커와 SAFE 경로로 표시됩니다.
+
+
+2. 현재 구현된 주요 기능
+현재 구현된 기능은 다음과 같습니다.
+
+- Spring Boot 서버 실행
+- /api/health 서버 상태 확인 API
+- /api/routes 경로 추천 API
+- /api/shadows 그림자 조회 API
+- OSM PBF 로컬 파일 기반 보행 도로망 로드
+- OSM segment별 그림자 점수 선계산
+- 그림자 점수를 비용으로 사용하는 Dijkstra 경로 탐색
+- TMAP 보행자 경로 API 후보 생성 및 fallback
+- 건물 데이터 조회 및 그림자 생성
+- 태양 고도 / 방위각 계산
+- segment 단위 shadeScore 계산
+- segment graph 기반 추가 최적화
+- 최단 / 그늘 / 균형 경로 반환
+- CCTV 위치 기반 safetyScore / cctvCount 계산
+- CCTV 접근성이 높은 SAFE 경로 선택 및 CCTV 마커 표시
+- PBF bbox 그래프 메모리 캐시
+
+
+3. 최신 경로 탐색 방식
+현재 /api/routes 요청은 아래 순서로 처리됩니다.
+
+1. 출발지와 목적지 주변 bbox를 계산합니다.
+
+2. data/osm/gyeongsang-non-military.osm.pbf 파일에서 bbox 내부 OSM node / way를 읽습니다.
+
+3. footway, path, pedestrian, steps, residential, service 등 보행 가능한 OSM way만 골라 보행 그래프를 만듭니다.
+
+4. 그래프의 모든 edge, 즉 도로 segment에 대해 그림자 점수를 먼저 계산합니다.
+
+5. segment별 shadeScore를 경로 탐색 비용에 반영합니다.
+
+6. 같은 OSM 그래프에서 비용 함수를 다르게 적용해 osm-shortest, osm-shade, osm-balanced 후보를 생성합니다.
+
+7. 기존 TMAP 기반 후보도 함께 생성합니다.
+
+8. 모든 후보 경로를 다시 segment 단위로 평가합니다.
+
+9. 후보들의 segment를 다시 그래프로 묶어 segment-optimized 후보를 추가 생성합니다.
+
+10. 각 후보 경로에 대해 CCTV 접근성 점수(safetyScore)와 주변 CCTV 목록(nearbyCctvs)을 계산합니다.
+
+11. 최종적으로 SHORTEST / SHADE / BALANCED 경로를 선택하고, CCTV 접근성이 높은 후보가 있으면 SAFE 경로도 함께 선택합니다.
+
+
+4. OSM 경로 후보 생성 기준
+OSM 기반 경로는 OsmPbfRouteGenerator.java에서 생성됩니다.
+
+현재 생성되는 OSM 후보는 다음과 같습니다.
+
+- osm-shortest
+  - 거리만 기준으로 탐색합니다.
+
+- osm-shade
+  - shadeScore가 높은 segment의 비용을 크게 낮춰 탐색합니다.
+  - 그늘이 많은 길을 더 적극적으로 선택합니다.
+
+- osm-balanced
+  - 거리와 그늘을 함께 고려합니다.
+  - 너무 돌아가지 않으면서도 그늘이 있는 길을 선택하도록 설계되어 있습니다.
+
+이후 RouteSelector.java에서 전체 후보 중 최종 SHORTEST / SHADE / BALANCED 대표 경로를 뽑습니다.
+
+
+5. segment 점수 의미
+응답의 routes[].segmentScores에는 각 구간별 점수가 포함됩니다.
+
+각 segmentScore 항목은 다음 값을 가집니다.
+
+- start: segment 시작 좌표
+- end: segment 종료 좌표
+- distance: segment 거리
+- shadeScore: 해당 segment가 그림자 안에 포함되는 비율
+- congestionScore: 혼잡도 점수
+- segmentScore: shadeScore와 congestionScore를 반영한 구간 종합 점수
+
+현재 congestionScore는 실제 혼잡 데이터가 없어 기본값 1.0을 사용합니다. 추후 보행량 데이터나 자체 DB가 생기면 이 값을 실제 혼잡도 기반으로 바꿀 수 있습니다.
+
+
+5-1. CCTV 반영 방식
+CCTV 데이터는 busan_general_cctv 테이블을 사용합니다. 서버는 각 후보 경로의 좌표를 일정 간격으로 샘플링하고, 각 샘플 지점 주변 약 50m 이내에 CCTV가 있는지 조회합니다. CCTV가 있는 샘플 지점의 비율을 safetyScore로 계산하고, 주변 CCTV 수량 합계를 cctvCount로 제공합니다.
+
+관련 코드:
+- CctvSafetyService.java: 경로 주변 CCTV 조회 및 safetyScore 계산
+- RouteEvaluator.java: 각 후보 경로 평가 시 CCTV 안전 점수 계산
+- RouteSelector.java: safetyScore와 우회 비율을 기준으로 SAFE 경로 선택
+- RouteOption.java / CctvPointDto.java: 응답에 safetyScore, cctvCount, nearbyCctvs 포함
+
+주의할 점은 CCTV가 shadeScore 또는 totalScore에 직접 합산되는 구조는 아니라는 점입니다. 즉, CCTV는 그늘 경로 점수의 보조 항목이 아니라 별도의 SAFE 경로와 CCTV 마커 표시를 위한 안전성 지표로 반영됩니다.
+
+
+6. 이번에 추가된 기능
+이번 작업에서 추가되거나 개선된 기능은 다음과 같습니다.
+
+- OSM segment 선채점 기반 탐색
+  - 기존에는 OSM 경로를 먼저 만든 뒤 segment별 그늘 점수를 평가했습니다.
+  - 현재는 OSM 그래프의 모든 segment에 그림자 점수를 먼저 계산합니다.
+  - 이후 그 점수를 Dijkstra 비용 함수에 반영해 처음부터 그늘 기반 경로를 탐색합니다.
+
+- SHADE / BALANCED 비용 함수 적용
+  - SHADE는 그늘 segment의 비용을 더 많이 낮춥니다.
+  - BALANCED는 거리와 그늘을 절충합니다.
+  - SHORTEST는 거리 중심으로 탐색합니다.
+
+- PBF bbox 그래프 캐시
+  - 같은 주변 영역 요청은 PBF 파일을 다시 읽지 않고 메모리 캐시를 재사용합니다.
+  - 첫 요청은 느릴 수 있지만, 같은 주변 영역의 두 번째 요청부터는 더 빠르게 동작합니다.
+
+- TMAP fallback 유지
+  - OSM 후보가 없거나 PBF 경로가 잘못되어도 기존 TMAP 후보 생성 방식이 함께 동작합니다.
+
+
+7. 실행 전 준비 사항
+아래 프로그램과 파일이 필요합니다.
+
+- JDK 21
+- IntelliJ IDEA Community 또는 Ultimate
+- 인터넷 연결
+- 선택 사항: Postman
+- OSM PBF 파일
+
+현재 PBF 파일 위치는 프로젝트 내부 상대경로 기준입니다.
+
+data/osm/gyeongsang-non-military.osm.pbf
+
+설정 파일 위치는 다음과 같습니다.
+
+src/main/resources/application.properties
+
+현재 설정은 다음과 같습니다.
+
+capstone.routing.osm.enabled=true
+capstone.routing.osm.pbf-path=data/osm/gyeongsang-non-military.osm.pbf
+capstone.routing.osm.max-bbox-span=0.04
+
+
+8. IntelliJ에서 실행하는 방법
+1. ZIP 압축을 해제합니다.
+
+2. capstone-server/data/osm 폴더에 gyeongsang-non-military.osm.pbf 파일이 있는지 확인합니다.
+
+3. IntelliJ를 실행합니다.
+
+4. IntelliJ에서 capstone-server 폴더를 Open 합니다.
+
+5. JDK가 설정되어 있지 않다면 JDK 21로 설정합니다.
+
+6. 아래 파일을 엽니다.
+
+src/main/java/com/example/capstone_server/CapstoneServerApplication.java
+
+7. CapstoneServerApplication을 실행합니다.
+
+8. 콘솔에 아래 문장이 나오면 서버 실행 성공입니다.
+
+Tomcat started on port 8080
+
+
+9. 터미널에서 실행하는 방법
+프로젝트 폴더에서 아래 명령어를 실행합니다.
+
+Windows PowerShell:
+
+cd 캡스톤 서버 주소
+./mvnw spring-boot:run
+
+서버가 정상 실행되면 콘솔에 Tomcat started on port 8080 문장이 출력됩니다.
+
+
+10. 서버 종료 방법
+터미널에서 실행 중이면 아래 방법으로 종료합니다.
+
+Ctrl + C
+
+종료되지 않거나 백그라운드에 java 프로세스가 남아 있으면 PowerShell에서 아래 명령어를 사용합니다.
+
+Get-Process java
+
+확인한 PID를 이용해 종료합니다.
+
+Stop-Process -Id PID번호 -Force
+
+8080 포트를 점유한 프로세스를 직접 찾고 싶으면 아래 명령어를 사용합니다.
+
+Get-NetTCPConnection -LocalPort 8080 | Select-Object OwningProcess
+
+
+11. 서버 상태 확인 API
+브라우저 또는 Postman에서 아래 주소로 접속합니다.
+
+GET http://localhost:8080/api/health
+
+정상 실행 중이면 아래처럼 응답합니다.
+
+ok
+
+
+12. 경로 요청 API
+API 주소는 다음과 같습니다.
+
+POST http://localhost:8080/api/routes
+
+요청 JSON 예시는 다음과 같습니다.
+
+{
+  "startLat": 35.144715,
+  "startLon": 129.035001,
+  "endLat": 35.153110,
+  "endLon": 129.028099,
+  "departureTime": "2026-05-19T14:00:00",
+  "preference": "BALANCED",
+  "cloudCover": 10.0,
+  "raining": false
+}
+
+주요 요청 값 설명:
+
+- departureTime: 출발 시간
+- preference: SHORTEST / SHADE / BALANCED
+- cloudCover: 구름량. 0~100 또는 0.0~1.0 입력 가능
+- raining: 비 여부
+
+응답에는 대표 경로와 routes 배열이 포함됩니다.
+
+routes 배열에는 아래 3가지 경로 타입이 포함됩니다.
+
+- SHORTEST: 가장 짧은 경로
+- SHADE: 그늘 점수가 높은 경로
+- BALANCED: 거리와 그늘을 함께 고려한 경로
+
+14. 그림자 조회 API
+API 주소는 다음과 같습니다.
+
+POST http://localhost:8080/api/shadows
+
+요청 JSON 예시는 다음과 같습니다.
+
+{
+  "minLat": 35.1400,
+  "minLon": 129.0100,
+  "maxLat": 35.1600,
+  "maxLon": 129.0400,
+  "departureTime": "2026-05-19T14:00:00"
+}
+
+routePoints를 함께 보내면 경로 주변 기준으로 그림자 데이터를 조회할 수 있습니다.
+
+
+15. 현재 프로젝트 구조
+현재 주요 구조는 다음과 같습니다.
+
+src/main/java/com/example/capstone_server
+
+- controller
+  - HealthController.java
+  - RouteController.java
+  - ShadowController.java
+
+- service
+  - RouteService.java
+  - ShadowService.java
+
+- service/routing
+  - CandidateRouteGenerator.java
+  - OsmPbfRouteGenerator.java
+  - SegmentGraphRouteOptimizer.java
+  - TmapPedestrianRouteClient.java
+  - RouteEvaluator.java
+  - RouteSelector.java
+  - RouteQualityFilter.java
+  - SolarPositionCalculator.java
+  - GeoMath.java
+
+- dto
+  - RouteRequest.java
+  - RouteResponse.java
+  - RouteOption.java
+  - RoutePoint.java
+  - RouteSegmentScore.java
+  - ShadowRequest.java
+  - ShadowResponse.java
+
+- CapstoneServerApplication.java
+
+
+16. 주요 파일 역할
+RouteService.java
+- 전체 경로 추천 흐름을 연결합니다.
+- 후보 생성, 경로 평가, segment 최적화, 최종 선택을 처리합니다.
+
+CandidateRouteGenerator.java
+- OSM PBF 후보와 TMAP 후보를 함께 생성합니다.
+
+OsmPbfRouteGenerator.java
+- 로컬 OSM PBF 파일을 읽어 보행 그래프를 만듭니다.
+- segment별 shadeScore를 먼저 계산합니다.
+- shadeScore를 비용으로 반영해 osm-shortest, osm-shade, osm-balanced 후보를 생성합니다.
+- bbox 단위 그래프 캐시를 사용합니다.
+
+SegmentGraphRouteOptimizer.java
+- 후보 경로들의 segment를 다시 그래프로 묶고, segment 점수 기반 최적 후보를 생성합니다.
+
+ShadowService.java
+- 건물 데이터 조회, 그림자 생성, 경로별 및 segment별 shadeScore 계산을 담당합니다.
+
+RouteEvaluator.java
+- 거리 점수, 그늘 점수, segment 점수, 날씨 반영 점수를 계산합니다.
+
+RouteSelector.java
+- 최단 경로, 그늘 우선 경로, 균형 경로를 최종 선택합니다.
+
+TmapPedestrianRouteClient.java
+- TMAP 보행자 경로 API를 호출합니다.
+
+SolarPositionCalculator.java
+- 시간과 좌표를 기준으로 태양 고도와 방위각을 계산합니다.
+
+
+17. 참고 및 주의 사항
+첫 번째 OSM 경로 요청은 PBF 파일을 읽고 segment별 그림자 점수를 계산하기 때문에 시간이 걸릴 수 있습니다.
+
+같은 주변 영역에 대한 두 번째 요청부터는 bbox 그래프 캐시가 적용되어 더 빠르게 응답합니다.
+
+PBF 파일 경로가 잘못되면 OSM 후보는 생성되지 않고, 기존 TMAP 후보 방식으로만 동작할 수 있습니다.
+
+현재 congestionScore는 실제 혼잡 데이터가 없어서 기본값 1.0입니다. 추후 보행량 데이터나 자체 DB가 생기면 이 값을 실제 혼잡도 기반으로 변경할 수 있습니다.
+
+현재 서버는 단순 목업이 아니라 OSM 도로망, segment별 그림자 선계산, 비용 기반 경로 탐색, TMAP 후보, 건물 그림자 계산이 결합된 상태입니다.

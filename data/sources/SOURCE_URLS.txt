@@ -1,0 +1,10 @@
+본 프로젝트 사용 데이터 출처 URL
+
+1. VWorld GIS건물일반집합정보 / GIS건물공간정보
+https://www.vworld.kr/dtmk/dtmk_ntads_s002.do?svcCde=NA&dsId=5
+
+2. 부산광역시 CCTV 설치 현황정보 - 공공데이터포털
+https://www.data.go.kr/data/15120867/openapi.do
+
+3. 부산광역시 구군 가로수 현황 - 공공데이터포털
+https://www.data.go.kr/data/15040363/openapi.do

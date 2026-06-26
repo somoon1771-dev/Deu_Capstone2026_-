@@ -1,0 +1,48 @@
+최종 제출본 확인 보고서
+
+1. 포함 자료
+- 백엔드 Spring Boot 소스 코드: src/
+- Flutter 모바일 앱 소스 코드: mobile/
+- 시연 영상: demo/demo_video.mp4
+- DB 스키마: data/database/capstone_schema.sql
+- 경로 결과 샘플: data/results/route_result.json, data/results/route-check-response.json
+- 데이터 출처 정리: data/sources/README.md, data/sources/SOURCE_URLS.txt
+- README 및 제출 체크리스트 포함
+
+2. 데이터 출처 반영
+- VWorld GIS건물일반집합정보 / GIS건물공간정보
+- 부산광역시 CCTV 설치 현황정보 - 공공데이터포털
+- 부산광역시 구군 가로수 현황 - 공공데이터포털
+- OpenStreetMap 보행 네트워크 데이터
+- 기상 데이터
+
+3. DB 파일 확인
+- capstone_schema.sql은 CREATE TABLE 중심의 스키마 파일입니다.
+- INSERT INTO 구문은 포함되어 있지 않습니다.
+- DB 비밀번호, API Key, ngrok, tailscale 인증정보는 포함되어 있지 않습니다.
+
+4. 민감정보 처리
+- application.properties 제거
+- application-example.properties만 포함
+- ApiKeys.java는 환경변수 기반으로 변경
+- 실제 DB 비밀번호/API Key 하드코딩 제거
+
+5. 제거한 파일 유형
+- 로그 파일
+- .dart_tool
+- .gradle
+- local.properties
+- APK/중복 ZIP 빌드 산출물
+
+6. 주의사항
+- GitHub에는 이 ZIP 파일 자체가 아니라 압축을 푼 내부 폴더/파일 구조가 보이게 업로드해야 합니다.
+- demo/demo_video.mp4가 GitHub 웹 업로드에서 막히면 GitHub Releases에 업로드하세요.
+- 최종보고서와 발표자료는 수업 제출용 Google Drive 폴더에 별도 업로드하세요.
+
+
+CCTV 반영 확인
+- busan_general_cctv 테이블 스키마 포함
+- CctvSafetyService.java에서 경로 주변 CCTV를 조회해 safetyScore / cctvCount / nearbyCctvs 계산
+- RouteSelector.java에서 CCTV 접근성 기반 SAFE 경로 선택
+- 프론트엔드 지도에서 CCTV 마커 및 CCTV 접근성 표시
+- CCTV는 shadeScore/totalScore 직접 합산이 아니라 별도 안전성 지표 및 SAFE 경로로 반영

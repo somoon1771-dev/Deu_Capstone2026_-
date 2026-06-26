@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Route Map Demo</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    body { margin:0; font-family:Arial, sans-serif; }
+    #map { width:100vw; height:100vh; }
+    .panel {
+      position:fixed; left:20px; top:20px; background:white;
+      padding:14px; border:2px solid #333; z-index:9999; font-size:15px;
+    }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<div class="panel">
+  <b>경로 시연</b><br>
+  빨강: 최단 경로<br>
+  파랑: 그늘 우선 경로<br>
+  초록: 균형 경로
+</div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+async function runDemo() {
+  const body = {
+    startLat: 35.1626,
+    startLon: 128.9857,
+    endLat: 35.1689,
+    endLon: 128.9966,
+    preference: "BALANCED",
+    temperatureCelsius: 30,
+    humidity: 60,
+    windSpeedMps: 2,
+    cloudCover: 20,
+    raining: false
+  };
+
+  const res = await fetch("/api/routes", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body)
+  });
+
+  const data = await res.json();
+
+  const map = L.map("map").setView([body.startLat, body.startLon], 15);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "© OpenStreetMap"
+  }).addTo(map);
+
+  const colors = {
+    SHORTEST: "red",
+    SHADE: "blue",
+    BALANCED: "green"
+  };
+
+  let all = [];
+
+  data.routes.forEach(route => {
+    const pts = route.points.map(p => [p.lat, p.lon]);
+    all = all.concat(pts);
+
+    L.polyline(pts, {
+      color: colors[route.routeType] || "black",
+      weight: 6,
+      opacity: 0.85
+    }).addTo(map).bindPopup(
+      route.routeType +
+      "<br>거리: " + route.distance + "m" +
+      "<br>그늘점수: " + route.shadeScore +
+      "<br>종합점수: " + route.totalScore
+    );
+  });
+
+  L.marker([body.startLat, body.startLon]).addTo(map).bindPopup("출발지: 사상역");
+  L.marker([body.endLat, body.endLon]).addTo(map).bindPopup("도착지: 신라대");
+
+  map.fitBounds(all);
+}
+
+runDemo();
+</script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+name: shade_route_mobile
+description: Mobile pedestrian navigation app using weather and shade-aware routes.
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_map: ^7.0.2
+  geolocator: ^13.0.1
+  http: ^1.2.2
+  latlong2: ^0.9.1
+  shared_preferences: ^2.3.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
